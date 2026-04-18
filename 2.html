@@ -1,0 +1,331 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ArrowLeft, ArrowRight, ArrowDown, ChevronsDown, RotateCcw, Play, Pause, Sparkles, Loader2 } from 'lucide-react';
+
+// 遊戲常數設定
+const COLS = 6;
+const ROWS = 12;
+const TARGET_SUM = 10;
+
+// 定義每個數字對應的鮮豔顏色與邊框（立體感）
+const getBlockStyle = (val) => {
+  const styles = {
+    0: 'bg-slate-800 border-slate-700 text-transparent shadow-none',
+    1: 'bg-[#FF595E] border-[#E04E53] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    2: 'bg-[#FF924C] border-[#E08143] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    3: 'bg-[#FFCA3A] border-[#E0B233] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    4: 'bg-[#C5CA30] border-[#ADB22A] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    5: 'bg-[#8AC926] border-[#79B021] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    6: 'bg-[#36949D] border-[#2F828A] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    7: 'bg-[#1982C4] border-[#1672AC] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    8: 'bg-[#4267AC] border-[#3A5B97] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]',
+    9: 'bg-[#6A4C93] border-[#5D4381] text-white shadow-[inset_0px_-4px_0px_rgba(0,0,0,0.2)]'
+  };
+  return styles[val] || styles[0];
+};
+
+const createEmptyGrid = () => Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+const getRandomVal = () => Math.floor(Math.random() * 9) + 1;
+
+export default function App() {
+  const [grid, setGrid] = useState(createEmptyGrid());
+  const [piece, setPiece] = useState({ x: Math.floor(COLS / 2), y: 0, val: getRandomVal() });
+  const [nextVal, setNextVal] = useState(getRandomVal());
+  const [score, setScore] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [comboMsg, setComboMsg] = useState(null);
+  const [aiFeedback, setAiFeedback] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const level = Math.floor(score / 500) + 1;
+  const speed = Math.max(150, 800 - (level - 1) * 100);
+
+  // 使用 ref 來儲存最新狀態，避免 setInterval 閉包過期
+  const gameState = useRef({ grid, piece, nextVal, gameOver, isPaused, score });
+  useEffect(() => {
+    gameState.current = { grid, piece, nextVal, gameOver, isPaused, score };
+  }, [grid, piece, nextVal, gameOver, isPaused, score]);
+
+  // 核心邏輯：處理方塊鎖定與消除
+  const triggerLockPiece = useCallback((overridePiece = null) => {
+    const { grid: currentGridState, nextVal: currentNextVal } = gameState.current;
+    const currentPiece = overridePiece || gameState.current.piece;
+
+    let newGrid = currentGridState.map(row => [...row]);
+    
+    if (currentPiece.y >= 0 && currentPiece.y < ROWS) {
+        newGrid[currentPiece.y][currentPiece.x] = currentPiece.val;
+    } else {
+        setGameOver(true);
+        return;
+    }
+
+    let totalPoints = 0;
+    let chain = 1;
+
+    // 連鎖消除檢查
+    while (true) {
+      let toClear = new Set();
+      
+      // 橫向檢查
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          let sum = 0;
+          let path = [];
+          for (let i = c; i < COLS; i++) {
+            if (newGrid[r][i] === 0) break;
+            sum += newGrid[r][i];
+            path.push(`${r},${i}`);
+            if (sum === TARGET_SUM) {
+              path.forEach(p => toClear.add(p));
+              break;
+            } else if (sum > TARGET_SUM) break;
+          }
+        }
+      }
+
+      // 縱向檢查
+      for (let c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+          let sum = 0;
+          let path = [];
+          for (let i = r; i < ROWS; i++) {
+            if (newGrid[i][c] === 0) break;
+            sum += newGrid[i][c];
+            path.push(`${i},${c}`);
+            if (sum === TARGET_SUM) {
+              path.forEach(p => toClear.add(p));
+              break;
+            } else if (sum > TARGET_SUM) break;
+          }
+        }
+      }
+
+      if (toClear.size === 0) break;
+
+      totalPoints += toClear.size * 10 * chain;
+      if (chain > 1) {
+        setComboMsg(`連鎖 x${chain}!`);
+        setTimeout(() => setComboMsg(null), 1000);
+      }
+      chain++;
+
+      toClear.forEach(pos => {
+        const [r, c] = pos.split(',').map(Number);
+        newGrid[r][c] = 0;
+      });
+
+      // 重力掉落
+      for (let c = 0; c < COLS; c++) {
+        let colVals = [];
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (newGrid[r][c] !== 0) colVals.push(newGrid[r][c]);
+        }
+        for (let r = ROWS - 1; r >= 0; r--) {
+          newGrid[r][c] = colVals.length > 0 ? colVals.shift() : 0;
+        }
+      }
+    }
+
+    setGrid(newGrid);
+    if (totalPoints > 0) setScore(s => s + totalPoints);
+
+    const spawnX = Math.floor(COLS / 2);
+    if (newGrid[0][spawnX] !== 0) {
+      setGameOver(true);
+    } else {
+      setPiece({ x: spawnX, y: 0, val: currentNextVal });
+      setNextVal(getRandomVal());
+    }
+  }, []);
+
+  // 移動控制
+  const move = useCallback((dx, dy) => {
+    const { grid: currentGrid, piece: currentPiece, gameOver, isPaused } = gameState.current;
+    if (gameOver || isPaused) return;
+
+    const newX = currentPiece.x + dx;
+    const newY = currentPiece.y + dy;
+
+    if (newX < 0 || newX >= COLS || newY >= ROWS) return;
+    if (currentGrid[newY][newX] !== 0) return;
+
+    setPiece(prev => ({ ...prev, x: newX, y: newY }));
+  }, []);
+
+  const moveDown = useCallback(() => {
+    const { grid: currentGrid, piece: currentPiece, gameOver, isPaused } = gameState.current;
+    if (gameOver || isPaused) return;
+
+    const newY = currentPiece.y + 1;
+    if (newY >= ROWS || currentGrid[newY][currentPiece.x] !== 0) {
+      triggerLockPiece();
+    } else {
+      setPiece(prev => ({ ...prev, y: newY }));
+    }
+  }, [triggerLockPiece]);
+
+  const hardDrop = useCallback(() => {
+    const { grid: currentGrid, piece: currentPiece, gameOver, isPaused } = gameState.current;
+    if (gameOver || isPaused) return;
+
+    let newY = currentPiece.y;
+    while (newY + 1 < ROWS && currentGrid[newY + 1][currentPiece.x] === 0) {
+      newY++;
+    }
+    triggerLockPiece({ ...currentPiece, y: newY });
+  }, [triggerLockPiece]);
+
+  // 鍵盤事件監聽：WASD + 方向鍵
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (gameOver || isPaused) return;
+      
+      const key = e.key.toLowerCase();
+      
+      if (['arrowleft', 'a'].includes(key)) {
+        e.preventDefault();
+        move(-1, 0);
+      } else if (['arrowright', 'd'].includes(key)) {
+        e.preventDefault();
+        move(1, 0);
+      } else if (['arrowdown', 's'].includes(key)) {
+        e.preventDefault();
+        moveDown();
+      } else if (['arrowup', 'w', ' '].includes(key)) {
+        e.preventDefault();
+        hardDrop();
+      } else if (key === 'escape') {
+        setIsPaused(p => !p);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [move, moveDown, hardDrop, gameOver, isPaused]);
+
+  // 遊戲計時器
+  useEffect(() => {
+    if (gameOver || isPaused) return;
+    const interval = setInterval(moveDown, speed);
+    return () => clearInterval(interval);
+  }, [moveDown, speed, gameOver, isPaused]);
+
+  // AI 分析功能
+  const generateAIAnalysis = async () => {
+    if (isAnalyzing || aiFeedback) return;
+    setIsAnalyzing(true);
+    const apiKey = ""; // Canvas 內部會處理 Key
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    
+    const prompt = `這是一個名為「加法俄羅斯：目標10」的數學益智遊戲。玩家最終分數是 ${score} 分，等級 ${level}。請扮演一個毒舌又幽默的AI教練，用繁體中文給玩家一段 50 字內的辛辣評語。`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+      const data = await response.json();
+      setAiFeedback(data.candidates?.[0]?.content?.parts?.[0]?.text || "教練累了。");
+    } catch (e) {
+      setAiFeedback("連線中斷，教練沒看到你的表現。");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const displayGrid = grid.map(row => [...row]);
+  if (!gameOver && piece.y < ROWS) displayGrid[piece.y][piece.x] = piece.val;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 font-sans select-none overflow-hidden">
+      <div className="mb-6 text-center">
+        <h1 className="text-4xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">加法俄羅斯</h1>
+        <div className="mt-2 bg-slate-800 px-4 py-1 rounded-full text-yellow-400 font-bold border border-slate-700">目標: {TARGET_SUM}</div>
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-8 items-center md:items-start">
+        {/* 左側狀態 */}
+        <div className="hidden md:flex flex-col gap-4 w-32">
+          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 text-center">
+            <div className="text-xs text-slate-500 font-bold mb-2">下一個</div>
+            <div className={`w-12 h-12 mx-auto rounded-lg flex items-center justify-center text-2xl font-black ${getBlockStyle(nextVal)}`}>{nextVal}</div>
+          </div>
+          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 text-center">
+            <div className="text-xs text-slate-500 font-bold">分數</div>
+            <div className="text-2xl font-black text-emerald-400">{score}</div>
+          </div>
+        </div>
+
+        {/* 遊戲盤面 */}
+        <div className="relative bg-slate-900 p-2 rounded-xl border-4 border-slate-800 shadow-2xl">
+          {comboMsg && (
+            <div className="absolute inset-x-0 top-20 text-center z-20 animate-bounce">
+              <span className="bg-yellow-400 text-black px-4 py-2 rounded-full font-black shadow-xl">{comboMsg}</span>
+            </div>
+          )}
+          
+          <div className="grid grid-cols-6 gap-1">
+            {displayGrid.map((row, r) => row.map((val, c) => (
+              <div key={`${r}-${c}`} className={`w-10 h-10 sm:w-12 sm:h-12 rounded flex items-center justify-center text-2xl font-black transition-all ${getBlockStyle(val)}`}>
+                {val > 0 ? val : ''}
+              </div>
+            )))}
+          </div>
+
+          {isPaused && (
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-lg">
+              <div className="text-center">
+                <Pause className="w-12 h-12 mx-auto mb-2 text-slate-400" />
+                <h2 className="text-xl font-bold">暫停中</h2>
+              </div>
+            </div>
+          )}
+
+          {gameOver && (
+            <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center rounded-lg p-6 text-center">
+              <h2 className="text-3xl font-black text-rose-500 mb-2">遊戲結束</h2>
+              <div className="text-slate-400 mb-4">總分: <span className="text-white font-bold">{score}</span></div>
+              
+              <div className="w-full mb-6">
+                {!aiFeedback && !isAnalyzing ? (
+                  <button onClick={generateAIAnalysis} className="w-full bg-indigo-600 py-2 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-indigo-500"><Sparkles className="w-4 h-4" /> 召喚 AI 教練分析</button>
+                ) : isAnalyzing ? (
+                  <div className="flex flex-col items-center gap-2 text-indigo-400"><Loader2 className="animate-spin" /> <span className="text-xs">分析中...</span></div>
+                ) : (
+                  <div className="bg-slate-800 p-3 rounded-lg text-sm text-left relative border border-indigo-500/30">
+                    <div className="absolute -top-2 -left-2 bg-indigo-600 px-2 py-0.5 rounded text-[10px] font-black uppercase">Coach Feedback</div>
+                    {aiFeedback}
+                  </div>
+                )}
+              </div>
+
+              <button onClick={() => { setGrid(createEmptyGrid()); setGameOver(false); setScore(0); setAiFeedback(""); }} className="bg-emerald-500 text-black font-bold px-6 py-2 rounded-full flex items-center gap-2 hover:bg-emerald-400"><RotateCcw className="w-4 h-4" /> 重開一局</button>
+            </div>
+          )}
+        </div>
+
+        {/* 控制與操作說明 */}
+        <div className="w-full md:w-48 flex flex-col gap-4">
+          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+             <h3 className="text-sm font-bold text-slate-400 mb-3 underline decoration-emerald-500">WASD 控制</h3>
+             <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500">
+                <div className="bg-slate-800 p-2 rounded">A / 左 : 左移</div>
+                <div className="bg-slate-800 p-2 rounded">D / 右 : 右移</div>
+                <div className="bg-slate-800 p-2 rounded">S / 下 : 加速</div>
+                <div className="bg-slate-800 p-2 rounded">W / 空白 : 下墜</div>
+             </div>
+          </div>
+          
+          {/* 行動版按鈕 */}
+          <div className="md:hidden grid grid-cols-4 gap-2">
+            <button onPointerDown={(e)=>{e.preventDefault(); move(-1, 0)}} className="bg-slate-800 p-4 rounded-xl flex justify-center active:bg-slate-700"><ArrowLeft /></button>
+            <button onPointerDown={(e)=>{e.preventDefault(); moveDown()}} className="bg-slate-800 p-4 rounded-xl flex justify-center active:bg-slate-700"><ArrowDown /></button>
+            <button onPointerDown={(e)=>{e.preventDefault(); move(1, 0)}} className="bg-slate-800 p-4 rounded-xl flex justify-center active:bg-slate-700"><ArrowRight /></button>
+            <button onPointerDown={(e)=>{e.preventDefault(); hardDrop()}} className="bg-rose-900/40 p-4 rounded-xl flex justify-center active:bg-rose-800"><ChevronsDown className="text-rose-400" /></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
